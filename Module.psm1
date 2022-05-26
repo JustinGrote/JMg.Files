@@ -190,3 +190,56 @@ function Save-JmgDriveItem {
         }
     }
 }
+
+function Copy-JmgDriveItem {
+    <#
+    .SYNOPSIS
+
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        #Where to save the file. Defaults to your current Directory
+        [String]$Path,
+        #Overwrite Files
+        [Switch]$Force,
+        [Parameter(Mandatory, ValueFromPipeline)][MicrosoftGraphDriveItem1]$DriveItem
+    )
+    begin {
+        $jobs = [List[Job2]]@()
+    }
+    process {
+        $dstPath = $Path
+        if (-not $dstPath) {
+            if (-not $DriveItem.Name) {
+                Write-Error 'The drive item supplied does not have a filename. Please specify -Path with the full path to save.'
+            }
+            $dstPath = Join-Path $PWD $DriveItem.Name
+        }
+        $existingItem = Get-Item $dstPath -ErrorAction SilentlyContinue
+        if ($ExistingItem -is [IO.DirectoryInfo]) {
+            $dstPath = Join-Path $dstPath $DriveItem.Name
+            $existingItem = Get-Item $dstPath -ErrorAction SilentlyContinue
+        }
+
+        if ($ExistingItem -and -not $Force) {
+            Write-Error "The file '$dstPath' already exists. Use -Force to overwrite."
+            return
+        }
+
+        $downloadUriProperty = '@microsoft.graph.downloadUrl'
+        if (-not $DriveItem.AdditionalProperties.ContainsKey($downloadUriProperty)) {
+            Write-Error "$($DriveItem.Name) is either a folder or cannot be downloaded."
+            return
+        }
+        [uri]$downloadUri = $DriveItem.AdditionalProperties[$downloadUriProperty]
+        if ($PSCmdlet.ShouldProcess($dstPath, "Download file $($DriveItem.Name)")) {
+            $job = Start-ThreadJob -Name "Download-$($DriveItem.Name)" { Invoke-RestMethod -Uri $USING:downloadUri -OutFile $USING:dstPath }
+            $jobs.Add($job)
+        }
+    }
+    end {
+        if ($jobs.count -gt 0) {
+            Receive-Job $jobs -Wait -AutoRemoveJob
+        }
+    }
+}

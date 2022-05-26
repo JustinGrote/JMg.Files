@@ -12,7 +12,7 @@
     RootModule        = 'Module.psm1'
 
     # Version number of this module.
-    ModuleVersion     = '0.0.0'
+    ModuleVersion     = '0.0.1'
 
     # Supported PSEditions
     # CompatiblePSEditions = @()
@@ -71,7 +71,14 @@
     # NestedModules = @()
 
     # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-    FunctionsToExport = '*'
+    FunctionsToExport = @(
+        'Get-JMgDrive'
+        'Get-JMgDriveItem'
+        'Get-JMgDriveChildItem'
+        'Get-JMgSiteByUri'
+        'Save-JMgDriveItem'
+        'Copy-JMgDriveItem'
+    )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
     CmdletsToExport   = '*'
@@ -112,7 +119,7 @@
             # ReleaseNotes = ''
 
             # Prerelease string of this module
-            Prerelease = 'Source'
+            # Prerelease = 'Source'
 
             # Flag to indicate whether the module requires explicit user acceptance for install/update/save
             # RequireLicenseAcceptance = $false
