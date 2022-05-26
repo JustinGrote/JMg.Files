@@ -12,7 +12,10 @@ Install-Module JMg.Files
 $files = Get-JMgDriveChildItem
 
 #Downloads the files to temp
-$files | Save-JMgDriveChildItem
+$files | Save-JMgDriveItem
+
+#Upload Files to the root of your onedrive
+Get-ChildItem -File /to/my/path | Push-JMgDriveItem
 
 ```
 

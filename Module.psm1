@@ -32,6 +32,9 @@ Get-MgSite 'SiteSearchKeyword'
         #Specify this to get the root Sharepoint Site
         [Parameter(Mandatory, ParameterSetName = 'Root')][Switch]$Root
     )
+    if (-not (Get-MgContext)) {
+        throw 'You are not connected to Microsoft Graph. Please run Connect-MgGraph first.'
+    }
     if ($null -eq $InputObject) {
         #Fetch the "my" drive by default
         Write-Verbose 'No input specified, fetching the /me drive.'
@@ -91,6 +94,9 @@ filter Get-JMgDriveItem {
         #The path to the file. If not specified, it gets the root folder
         [String]$Path
     )
+    if (-not (Get-MgContext)) {
+        throw 'You are not connected to Microsoft Graph. Please run Connect-MgGraph first.'
+    }
     if (-not $Drive) {
         Write-Verbose 'No ID specified, fetching the contents of the /me drive.'
         $Drive = Get-JMgDrive
@@ -123,6 +129,9 @@ filter Get-JMgDriveChildItem {
         #The path to the file. If not specified, it gets the root folder
         [String]$Path
     )
+    if (-not (Get-MgContext)) {
+        throw 'You are not connected to Microsoft Graph. Please run Connect-MgGraph first.'
+    }
     if (-not $Drive) {
         Write-Verbose 'No ID specified, fetching the contents of the /me drive.'
         $Drive = Get-JMgDrive
@@ -154,6 +163,9 @@ function Save-JmgDriveItem {
         [Parameter(Mandatory, ValueFromPipeline)][MicrosoftGraphDriveItem1]$DriveItem
     )
     begin {
+        if (-not (Get-MgContext)) {
+            throw 'You are not connected to Microsoft Graph. Please run Connect-MgGraph first.'
+        }
         $jobs = [List[Job2]]@()
     }
     process {
@@ -212,6 +224,9 @@ function Push-JmgDriveItem {
         [MicrosoftGraphDriveItem1]$DriveItem
     )
     begin {
+        if (-not (Get-MgContext)) {
+            throw 'You are not connected to Microsoft Graph. Please run Connect-MgGraph first.'
+        }
         $jobs = [List[Job2]]@()
         if (-not $DriveItem) {
             Write-Verbose 'No destination specified, uploading to your OneDrive Documents folder'
@@ -256,34 +271,33 @@ function Push-JmgDriveItem {
         }
         $createUploadSessionUri = "https://graph.microsoft.com/v1.0/drives/$driveId/$itemPath/createUploadSession"
         $uploadSessionBody = @{
-            item                                = @{
-                name = $Item.Name
+            item = @{
+                '@microsoft.graph.conflictBehavior' = $Force ? 'replace' : 'fail'
+                name                                = $Item.Name
             }
-            '@microsoft.graph.conflictBehavior' = $Force ? 'replace' : 'fail'
         }
         if ($PSCmdlet.ShouldProcess($DriveItem.Name, "Upload File $($Item.Name)")) {
-            $uploadSession = Invoke-MgGraphRequest -Method 'POST' -Uri $createUploadSessionUri -ContentType 'application/json' -ErrorVariable err -SessionVariable session -Body $uploadSessionBody
             if ($err) { return }
 
             $context = @{
-                Item          = $item
-                UploadSession = $uploadSession
-                Session       = $session
-                Modules       = (Get-Module 'Microsoft.Graph.Files', 'JMg.Files')
+                Uri  = $createUploadSessionUri
+                Body = $uploadSessionBody
+                Item = $Item
             }
             $job = Start-ThreadJob -Name "Upload-$($Item.Name)" -ArgumentList $context -ScriptBlock {
                 param($context)
-                Import-Module $context.Modules
+                $uploadSession = Invoke-MgGraphRequest -Method 'POST' -Uri $context.Uri -ContentType 'application/json' -ErrorVariable err -SessionVariable session -Body $context.Body
+                if ($err) { return }
+                # Import-Module '$context.Modules'
                 $uploadParams = @{
                     Method              = 'PUT'
-                    Uri                 = $context.UploadSession.uploadUrl
+                    Uri                 = $UploadSession.uploadUrl
                     ContentType         = 'application/octet-stream'
 
-                    Headers             = @{
+                    Headers     = @{
                         'Content-Range' = 'bytes 0-' + ($context.Item.Length - 1) + '/' + $context.Item.Length
                     }
-                    Body                = [IO.File]::ReadAllBytes($context.Item.FullName)
-                    GraphRequestSession = $context.Session
+                    Body        = [IO.File]::ReadAllBytes($context.Item.FullName)
                 }
                 [Microsoft.Graph.Powershell.Models.MicrosoftGraphDriveItem1](Invoke-MgGraphRequest @UploadParams)
             }
