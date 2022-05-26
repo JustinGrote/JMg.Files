@@ -5,6 +5,8 @@ using namespace System.Management.Automation
 using namespace System.Collections.Generic
 Update-FormatData -PrependPath $PSScriptRoot\Formats\*.Format.ps1xml
 
+#Reference: https://www.youtube.com/watch?v=YYMFP8xcNOQ
+
 filter Get-JMgDrive {
     <#
 .SYNOPSIS
@@ -191,49 +193,100 @@ function Save-JmgDriveItem {
     }
 }
 
-function Copy-JmgDriveItem {
+function Push-JmgDriveItem {
     <#
     .SYNOPSIS
+    Upload a file to a drive item
+    .EXAMPLE
+    Get-Item test.txt | Push-JmgDriveItem (Get-JMgDriveItem)
 
+    Uploads a file to your OneDrive
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
-        #Where to save the file. Defaults to your current Directory
-        [String]$Path,
+        #The Path to the file to upload. This only supports individual files at the moment but you can pipe multiple files.
+        [Parameter(Mandatory, ValueFromPipeline)][String]$Path,
         #Overwrite Files
         [Switch]$Force,
-        [Parameter(Mandatory, ValueFromPipeline)][MicrosoftGraphDriveItem1]$DriveItem
+        #The upload destination
+        [MicrosoftGraphDriveItem1]$DriveItem
     )
     begin {
         $jobs = [List[Job2]]@()
+        if (-not $DriveItem) {
+            Write-Verbose 'No destination specified, uploading to your OneDrive Documents folder'
+            $DriveItem = Get-JMgDriveItem
+        }
+        #HACK: Because of how the objects get composed there's not a great way to check if the destination is a folder or a file.
+        if ($DriveItem.AdditionalProperties.'@odata.context' -match '/root/\$entity$') {
+            $DriveItemIsRoot = $true
+        }
+        if ($null -ne $DriveItem.Folder.ChildCount) {
+            Write-Verbose "Detected that the driveItem $($DriveItem.Name) is a folder, will save to same-named file in the folder"
+            $DriveItemIsFolder = $true
+        }
     }
     process {
-        $dstPath = $Path
-        if (-not $dstPath) {
-            if (-not $DriveItem.Name) {
-                Write-Error 'The drive item supplied does not have a filename. Please specify -Path with the full path to save.'
+        $err = $null
+        $Item = Get-Item $Path -ErrorVariable err
+        if ($err) { return }
+
+        if (($Item.Length / 60MB) -ge 1) {
+            Write-Error -Exception ([NotImplementedException]'Currently can only process files of 60MB or smaller size')
+            return
+        }
+
+        if ($Item -is [IO.DirectoryInfo]) {
+            Write-Error -Exception ([NotSupportedException]'Folders and recursion are not yet supported, specify the individual files instead. HINT: Get-ChildItem -File.')
+            return
+        }
+
+        $driveId = $DriveItem.ParentReference.DriveId
+
+        [string]$ItemPath = switch ($true) {
+            $DriveItemIsRoot {
+                'root' + ':/' + $Item.Name + ':'; break
             }
-            $dstPath = Join-Path $PWD $DriveItem.Name
+            $driveItemIsFolder {
+                'items/' + $driveItem.Id + ':/' + $Item.Name + ':' ; break
+            }
+            default {
+                'items/' + $driveItem.Id
+            }
         }
-        $existingItem = Get-Item $dstPath -ErrorAction SilentlyContinue
-        if ($ExistingItem -is [IO.DirectoryInfo]) {
-            $dstPath = Join-Path $dstPath $DriveItem.Name
-            $existingItem = Get-Item $dstPath -ErrorAction SilentlyContinue
+        $createUploadSessionUri = "https://graph.microsoft.com/v1.0/drives/$driveId/$itemPath/createUploadSession"
+        $uploadSessionBody = @{
+            item                                = @{
+                name = $Item.Name
+            }
+            '@microsoft.graph.conflictBehavior' = $Force ? 'replace' : 'fail'
         }
+        if ($PSCmdlet.ShouldProcess($DriveItem.Name, "Upload File $($Item.Name)")) {
+            $uploadSession = Invoke-MgGraphRequest -Method 'POST' -Uri $createUploadSessionUri -ContentType 'application/json' -ErrorVariable err -SessionVariable session -Body $uploadSessionBody
+            if ($err) { return }
 
-        if ($ExistingItem -and -not $Force) {
-            Write-Error "The file '$dstPath' already exists. Use -Force to overwrite."
-            return
-        }
+            $context = @{
+                Item          = $item
+                UploadSession = $uploadSession
+                Session       = $session
+                Modules       = (Get-Module 'Microsoft.Graph.Files', 'JMg.Files')
+            }
+            $job = Start-ThreadJob -Name "Upload-$($Item.Name)" -ArgumentList $context -ScriptBlock {
+                param($context)
+                Import-Module $context.Modules
+                $uploadParams = @{
+                    Method              = 'PUT'
+                    Uri                 = $context.UploadSession.uploadUrl
+                    ContentType         = 'application/octet-stream'
 
-        $downloadUriProperty = '@microsoft.graph.downloadUrl'
-        if (-not $DriveItem.AdditionalProperties.ContainsKey($downloadUriProperty)) {
-            Write-Error "$($DriveItem.Name) is either a folder or cannot be downloaded."
-            return
-        }
-        [uri]$downloadUri = $DriveItem.AdditionalProperties[$downloadUriProperty]
-        if ($PSCmdlet.ShouldProcess($dstPath, "Download file $($DriveItem.Name)")) {
-            $job = Start-ThreadJob -Name "Download-$($DriveItem.Name)" { Invoke-RestMethod -Uri $USING:downloadUri -OutFile $USING:dstPath }
+                    Headers             = @{
+                        'Content-Range' = 'bytes 0-' + ($context.Item.Length - 1) + '/' + $context.Item.Length
+                    }
+                    Body                = [IO.File]::ReadAllBytes($context.Item.FullName)
+                    GraphRequestSession = $context.Session
+                }
+                [Microsoft.Graph.Powershell.Models.MicrosoftGraphDriveItem1](Invoke-MgGraphRequest @UploadParams)
+            }
             $jobs.Add($job)
         }
     }
