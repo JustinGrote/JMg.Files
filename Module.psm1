@@ -220,6 +220,8 @@ function Push-JmgDriveItem {
         [Parameter(Mandatory, ValueFromPipeline)][String]$Path,
         #Overwrite Files
         [Switch]$Force,
+        #Return the drive items after they are uploaded
+        [Switch]$PassThru,
         #The upload destination
         [MicrosoftGraphDriveItem1]$DriveItem
     )
@@ -271,7 +273,9 @@ function Push-JmgDriveItem {
         }
         $createUploadSessionUri = "https://graph.microsoft.com/v1.0/drives/$driveId/$itemPath/createUploadSession"
         $uploadSessionBody = @{
-            item = @{
+            #BUG: The order of entries in item is apparently important: https://github.com/microsoftgraph/microsoft-graph-docs/issues/17072
+            #That's why we use ordered here
+            item = [ordered]@{
                 '@microsoft.graph.conflictBehavior' = $Force ? 'replace' : 'fail'
                 name                                = $Item.Name
             }
@@ -280,19 +284,26 @@ function Push-JmgDriveItem {
             if ($err) { return }
 
             $context = @{
-                Uri  = $createUploadSessionUri
-                Body = $uploadSessionBody
-                Item = $Item
+                Uri      = $createUploadSessionUri
+                Body     = $uploadSessionBody
+                Item     = $Item
+                PSCmdlet = $PSCmdlet
             }
             $job = Start-ThreadJob -Name "Upload-$($Item.Name)" -ArgumentList $context -ScriptBlock {
                 param($context)
-                $uploadSession = Invoke-MgGraphRequest -Method 'POST' -Uri $context.Uri -ContentType 'application/json' -ErrorVariable err -SessionVariable session -Body $context.Body
-                if ($err) { return }
-                # Import-Module '$context.Modules'
+                $uploadSession = try {
+                    Invoke-MgGraphRequest -Method 'POST' -Uri $context.Uri -ContentType 'application/json' -EA stop -SessionVariable session -Body $context.Body
+                } catch {
+                    if ($psitem.exception.response.statuscode -eq 'Conflict') {
+                        $PSItem.ErrorDetails = "The file '$($context.Item.Name)' already exists. Use -Force to overwrite."
+                    }
+                    $PSItem
+                    return
+                }
                 $uploadParams = @{
-                    Method              = 'PUT'
-                    Uri                 = $UploadSession.uploadUrl
-                    ContentType         = 'application/octet-stream'
+                    Method      = 'PUT'
+                    Uri         = $UploadSession.uploadUrl
+                    ContentType = 'application/octet-stream'
 
                     Headers     = @{
                         'Content-Range' = 'bytes 0-' + ($context.Item.Length - 1) + '/' + $context.Item.Length
@@ -307,6 +318,13 @@ function Push-JmgDriveItem {
     end {
         if ($jobs.count -gt 0) {
             Receive-Job $jobs -Wait -AutoRemoveJob
+            | ForEach-Object {
+                if ($PSItem -is [ErrorRecord]) {
+                    $PSCmdlet.WriteError($PSItem)
+                } elseif ($PassThru) {
+                    $PSItem
+                }
+            }
         }
     }
 }
