@@ -1,0 +1,166 @@
+#requires -module Microsoft.Graph.Sites,Microsoft.Graph.Users,Microsoft.Graph.Groups,Microsoft.Graph.Files
+using namespace Microsoft.Graph.PowerShell.Models
+using namespace Microsoft.Graph.PowerShell.Runtime
+using namespace System.Management.Automation
+Update-FormatData -PrependPath $PSScriptRoot\Formats\*.Format.ps1xml
+
+filter Get-JMgDrive {
+    <#
+.SYNOPSIS
+A Universal method of getting the drive of a resource (site, onedrive, user, email, url, etc.) by piping it to this command
+.EXAMPLE
+Get-JMGDrive -Root
+.EXAMPLE
+'user@principalname.com' | Get-JMGDrive
+.EXAMPLE
+'https://mysite.sharepoint.com' | Get-JMGDrive
+.EXAMPLE
+'https://mysite.sharepoint.com/sites/OurSite' | Get-JMGDrive
+.EXAMPLE
+Get-MgSite -Property "siteCollection,webUrl" -Filter "siteCollection/root ne null" | Get-JMGDrive
+.EXAMPLE
+Get-MgSite 'SiteSearchKeyword'
+#>
+    [OutputType('MicrosoftGraphDrive1[]')]
+    [CmdletBinding(DefaultParameterSetName = 'InputObject')]
+    param(
+        #Retrieve a drive by user UPN, sharepoint site URI, or a user/onedrive/site/team object
+        [Parameter(Position = 0, ValueFromPipeline, ParameterSetName = 'InputObject')]$InputObject,
+        #Specify this to get the root Sharepoint Site
+        [Parameter(Mandatory, ParameterSetName = 'Root')][Switch]$Root
+    )
+    if ($null -eq $InputObject) {
+        #Fetch the "my" drive by default
+        Write-Verbose 'No input specified, fetching the /me drive.'
+        return [MicrosoftGraphDrive1[]](Invoke-MgGraphRequest -Method Get 'v1.0/me/drives').value
+    }
+    if ($root) {
+        return Get-MgDrive
+    }
+    switch ($InputObject.GetType().Name) {
+        'Uri' { Get-MgSiteByUri $Uri | Get-JMgDrive }
+        'MailAddress' { Get-MgUser -UserId $InputObject | Where-Object { $PSItem } | Get-JMgDrive }
+        'MicrosoftGraphSite1' { Get-MgSiteDrive -SiteId $InputObject.Id }
+        'MicrosoftGraphUser1' {
+            try {
+                Get-MgUserDrive -UserId $InputObject.Id -ErrorAction stop
+            } catch [RestException] {
+                if ($PSItem -match 'Access Denied') {
+                    $PSItem.ErrorDetails = "You don't have access to this user's OneDrive. This is the default setting in O365 for privacy. To access these files as someone other than the user, you must create an access link: https://docs.microsoft.com/en-us/microsoft-365/admin/add-users/remove-former-employee-step-5?view=o365-worldwide"
+                }
+                Write-Error -ErrorRecord $PSItem; return
+            }
+        }
+        'MicrosoftGraphGroup1' { Get-MgGroupDrive -GroupId $InputObject.Id }
+        'MicrosoftGraphTeam1' { Get-MgGroupDrive -GroupId $InputObject.Id }
+        default {
+            try {
+                $uri = [Uri]::new($InputObject)
+                return $Uri | Get-JMgDrive
+            } catch [MethodInvocationException] {}
+
+            $upn = $InputObject -as [mailaddress]
+            if ($upn) {
+                return $upn | Get-JMgDrive
+            }
+
+            # Last resort is a keyword search of Sharepoint Sites
+            $siteIds = (Get-MgSite -Search ([String]$InputObject)).id
+            if (-not $siteIds) { throw "Site Search returned no results for $siteIds" }
+            $siteIds | Get-JMgDrive
+        }
+    }
+}
+
+filter Get-JMgSiteByUri {
+    param(
+        [Uri]$Uri
+    )
+    $siteId = $Uri.Host, $Uri.AbsolutePath -join ':'
+    Get-MgSite -SiteId $siteId
+}
+
+filter Get-JMgDriveItem {
+    [CmdletBinding()]
+    param(
+        #The Id of the drive. You can pipe from Get-JMg
+        [Parameter(ValueFromPipeline)][MicrosoftGraphDrive1]$Drive,
+        #The path to the file. If not specified, it gets the root folder
+        [String]$Path
+    )
+    if (-not $Drive) {
+        Write-Verbose 'No ID specified, fetching the contents of the /me drive.'
+        $Drive = Get-JMgDrive
+    }
+    if (-not $Drive) {
+        Write-Error 'No drive found.'
+        return
+    }
+    $DriveId = $Drive.Id
+    if (-not $Path) {
+        return Get-MgDriveRoot -DriveId $DriveId
+    } else {
+        try {
+            [MicrosoftGraphDriveItem1](Invoke-MgGraphRequest -Method GET "v1.0/drives/$DriveId/root:/$Path" -ErrorAction stop).Value
+        } catch {
+            if ($PSItem.exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
+                $PSItem.ErrorDetails = "The file or folder '$Path' does not exist in drive $($Drive.Name). Paths should be specified in folder/folder/file.txt format"
+            }
+            Write-Error -ErrorRecord $PSItem
+            return
+        }
+    }
+}
+
+filter Get-JMgDriveChildItem {
+    [CmdletBinding()]
+    param(
+        #The Id of the drive. You can pipe from Get-JMg
+        [Parameter(ValueFromPipeline)][MicrosoftGraphDrive1]$Drive,
+        #The path to the file. If not specified, it gets the root folder
+        [String]$Path
+    )
+    if (-not $Drive) {
+        Write-Verbose 'No ID specified, fetching the contents of the /me drive.'
+        $Drive = Get-JMgDrive
+    }
+    if (-not $Drive) {
+        Write-Error '-Drive parameter was not supplied and your account does not have a default OneDrive'
+        return
+    }
+    $DriveId = $Drive.Id
+    $DrivePath = $Path ? "root:/${Path}:/children" : 'root/children'
+    try {
+        [MicrosoftGraphDriveItem1[]](Invoke-MgGraphRequest -Method GET "v1.0/drives/$DriveId/$DrivePath" -ErrorAction stop).Value
+    } catch {
+        if ($PSItem.exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
+            $PSItem.ErrorDetails = "The file or folder '$Path' does not exist in drive $($Drive.Name). Paths should be specified in folder/folder/file.txt format"
+        }
+        Write-Error -ErrorRecord $PSItem
+        return
+    }
+}
+
+filter Save-JmgDriveItem {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)][MicrosoftGraphDriveItem1]$DriveItem,
+        #Where to save the file. Defaults to your current Directory
+        [String]$Path
+    )
+    if (-not $path) {
+        if (-not $DriveItem.Name) {
+            Write-Error 'The drive item supplied does not have a filename. Please specify -Path with the full path to save.'
+        }
+        $Path = Join-Path $PWD $DriveItem.Name
+    }
+    $downloadUriProperty = '@microsoft.graph.downloadUrl'
+    if (-not $DriveItem.AdditionalProperties.ContainsKey($downloadUriProperty)) {
+        Write-Error "$($DriveItem.Name) is either a folder or cannot be download."
+        return
+    }
+    [uri]$downloadUri = $DriveItem.AdditionalProperties[$downloadUriProperty]
+    if ($PSCmdlet.ShouldProcess("Save file $($DriveItem.Name) to $Path")) {
+        Invoke-RestMethod -Uri $downloadUri -OutFile $Path
+    }
+}
