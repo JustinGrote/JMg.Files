@@ -2,6 +2,7 @@
 using namespace Microsoft.Graph.PowerShell.Models
 using namespace Microsoft.Graph.PowerShell.Runtime
 using namespace System.Management.Automation
+using namespace System.Collections.Generic
 Update-FormatData -PrependPath $PSScriptRoot\Formats\*.Format.ps1xml
 
 filter Get-JMgDrive {
@@ -141,26 +142,51 @@ filter Get-JMgDriveChildItem {
     }
 }
 
-filter Save-JmgDriveItem {
+function Save-JmgDriveItem {
     [CmdletBinding(SupportsShouldProcess)]
     param(
-        [Parameter(Mandatory, ValueFromPipeline)][MicrosoftGraphDriveItem1]$DriveItem,
         #Where to save the file. Defaults to your current Directory
-        [String]$Path
+        [String]$Path,
+        #Overwrite Files
+        [Switch]$Force,
+        [Parameter(Mandatory, ValueFromPipeline)][MicrosoftGraphDriveItem1]$DriveItem
     )
-    if (-not $path) {
-        if (-not $DriveItem.Name) {
-            Write-Error 'The drive item supplied does not have a filename. Please specify -Path with the full path to save.'
+    begin {
+        $jobs = [List[Job2]]@()
+    }
+    process {
+        $dstPath = $Path
+        if (-not $dstPath) {
+            if (-not $DriveItem.Name) {
+                Write-Error 'The drive item supplied does not have a filename. Please specify -Path with the full path to save.'
+            }
+            $dstPath = Join-Path $PWD $DriveItem.Name
         }
-        $Path = Join-Path $PWD $DriveItem.Name
+        $existingItem = Get-Item $dstPath -ErrorAction SilentlyContinue
+        if ($ExistingItem -is [IO.DirectoryInfo]) {
+            $dstPath = Join-Path $dstPath $DriveItem.Name
+            $existingItem = Get-Item $dstPath -ErrorAction SilentlyContinue
+        }
+
+        if ($ExistingItem -and -not $Force) {
+            Write-Error "The file '$dstPath' already exists. Use -Force to overwrite."
+            return
+        }
+
+        $downloadUriProperty = '@microsoft.graph.downloadUrl'
+        if (-not $DriveItem.AdditionalProperties.ContainsKey($downloadUriProperty)) {
+            Write-Error "$($DriveItem.Name) is either a folder or cannot be downloaded."
+            return
+        }
+        [uri]$downloadUri = $DriveItem.AdditionalProperties[$downloadUriProperty]
+        if ($PSCmdlet.ShouldProcess($dstPath, "Download file $($DriveItem.Name)")) {
+            $job = Start-ThreadJob -Name "Download-$($DriveItem.Name)" { Invoke-RestMethod -Uri $USING:downloadUri -OutFile $USING:dstPath }
+            $jobs.Add($job)
+        }
     }
-    $downloadUriProperty = '@microsoft.graph.downloadUrl'
-    if (-not $DriveItem.AdditionalProperties.ContainsKey($downloadUriProperty)) {
-        Write-Error "$($DriveItem.Name) is either a folder or cannot be download."
-        return
-    }
-    [uri]$downloadUri = $DriveItem.AdditionalProperties[$downloadUriProperty]
-    if ($PSCmdlet.ShouldProcess("Save file $($DriveItem.Name) to $Path")) {
-        Invoke-RestMethod -Uri $downloadUri -OutFile $Path
+    end {
+        if ($jobs.count -gt 0) {
+            Receive-Job $jobs -Wait -AutoRemoveJob
+        }
     }
 }
