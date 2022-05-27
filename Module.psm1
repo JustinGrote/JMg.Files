@@ -38,7 +38,15 @@ Get-MgSite 'SiteSearchKeyword'
     if ($null -eq $InputObject) {
         #Fetch the "my" drive by default
         Write-Verbose 'No input specified, fetching the /me drive.'
-        return [MicrosoftGraphDrive1[]](Invoke-MgGraphRequest -Method Get 'v1.0/me/drives').value
+        $drive = try {
+            [MicrosoftGraphDrive1[]](Invoke-MgGraphRequest -Method Get 'v1.0/me/drives').value
+        } catch {
+            $PSItem
+            | Set-StatusCodeErrorMessage 'NotFound' 'Tried to fetch your OneDrive by default, but you are not licensed or provisioned for OneDrive. Please choose another search option.'
+            | Write-Error
+            return
+        }
+        return $drive
     }
     if ($root) {
         return Get-MgDrive
@@ -116,10 +124,9 @@ filter Get-JMgDriveItem {
         try {
             [MicrosoftGraphDriveItem1](Invoke-MgGraphRequest -Method GET "v1.0/drives/$DriveId/root:/$Path" -ErrorAction stop)
         } catch {
-            if ($PSItem.exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
-                $PSItem.ErrorDetails = "The file or folder '$Path' does not exist in drive $($Drive.Name). Paths should be specified in folder/folder/file.txt format"
-            }
-            Write-Error -ErrorRecord $PSItem
+            $PSItem
+            | Set-StatusCodeErrorMessage 'NotFound' "The file or folder '$Path' does not exist in drive $($Drive.Name). Paths should be specified in folder/folder/file.txt format"
+            | Write-Error
             return
         }
     }
@@ -157,10 +164,9 @@ filter Get-JMgDriveChildItem {
     try {
         [MicrosoftGraphDriveItem1[]](Invoke-MgGraphRequest -Method GET "v1.0/drives/$DriveId/$DrivePath" -ErrorAction stop).Value
     } catch {
-        if ($PSItem.exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
-            $PSItem.ErrorDetails = "The file or folder '$Path' does not exist in drive $($Drive.Name). Paths should be specified in folder/folder/file.txt format"
-        }
-        Write-Error -ErrorRecord $PSItem
+        $PSItem
+        | Set-StatusCodeErrorMessage 'NotFound' "The file or folder '$Path' does not exist in drive $($Drive.Name). Paths should be specified in folder/folder/file.txt format"
+        | Write-Error
         return
     }
 }
@@ -341,4 +347,12 @@ function Push-JmgDriveItem {
 
 function Test-IsDriveRoot ($DriveItem) {
     $DriveItem.AdditionalProperties.'@odata.context' -match '/root/\$entity$'
+}
+
+function Set-StatusCodeErrorMessage ([Net.HttpStatusCode]$code, [String]$message, [Parameter(Mandatory, ValueFromPipeline)][ErrorRecord]$err) {
+    if ($err.exception.GetType().Name -ne 'HttpResponseException') { throw 'Add-StatusCodeError only works on HttpResponseExceptions' }
+    if ($err.Exception.Response.statuscode -eq $code) {
+        $err.ErrorDetails = $message
+    }
+    return $err
 }
