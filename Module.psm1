@@ -39,7 +39,7 @@ Get-MgSite 'SiteSearchKeyword'
         #Fetch the "my" drive by default
         Write-Verbose 'No input specified, fetching the /me drive.'
         $drive = try {
-            [Microsoft.Graph.Powershell.Models.MicrosoftGraphDrive1[], Microsoft.Graph.Files.Private](Invoke-MgGraphRequest -Method Get 'v1.0/me/drives').value
+            [MicrosoftGraphDrive1[]](Invoke-MgGraphRequest -Method Get 'v1.0/me/drives').value
         } catch {
             $PSItem
             | Set-StatusCodeErrorMessage 'NotFound' 'Tried to fetch your OneDrive by default, but you are not licensed or provisioned for OneDrive. Please choose another search option.'
@@ -98,7 +98,7 @@ filter Get-JMgDriveItem {
     [CmdletBinding()]
     param(
         #The Id of the drive. You can pipe from Get-JMg
-        [Parameter(ValueFromPipeline)][Microsoft.Graph.Powershell.Models.MicrosoftGraphDrive1[], Microsoft.Graph.Files.Private]$Drive,
+        [Parameter(ValueFromPipeline)][MicrosoftGraphDrive1]$Drive,
         #The path to the file. If not specified, it gets the root folder
         [String]$Path
     )
@@ -122,7 +122,7 @@ filter Get-JMgDriveItem {
         return Get-MgDriveRoot -DriveId $DriveId
     } else {
         try {
-            [Microsoft.Graph.Powershell.Models.MicrosoftGraphDriveItem1, Microsoft.Graph.Files.Private](Invoke-MgGraphRequest -Method GET "v1.0/drives/$DriveId/root:/$Path" -ErrorAction stop)
+            [MicrosoftGraphDriveItem1](Invoke-MgGraphRequest -Method GET "v1.0/drives/$DriveId/root:/$Path" -ErrorAction stop)
         } catch {
             $PSItem
             | Set-StatusCodeErrorMessage 'NotFound' "The file or folder '$Path' does not exist in drive $($Drive.Name). Paths should be specified in folder/folder/file.txt format"
@@ -146,7 +146,7 @@ filter Get-JMgDriveChildItem {
         Write-Error -Exception ([NotImplementedException]'You cant pass DriveItems to this command yet, only drives. Use -Path if you want a subfolder')
         return
     }
-    $Drive = [Microsoft.Graph.Powershell.Models.MicrosoftGraphDrive1, Microsoft.Graph.Files.Private]$Drive
+    $Drive = [MicrosoftGraphDrive1]$Drive
 
     if (-not (Get-MgContext)) {
         throw 'You are not connected to Microsoft Graph. Please run Connect-MgGraph first.'
@@ -162,7 +162,7 @@ filter Get-JMgDriveChildItem {
     $DriveId = $Drive.Id
     $DrivePath = $Path ? "root:/${Path}:/children" : 'root/children'
     try {
-        [Microsoft.Graph.Powershell.Models.MicrosoftGraphDriveItem1[], Microsoft.Graph.Files.Private](Invoke-MgGraphRequest -Method GET "v1.0/drives/$DriveId/$DrivePath" -ErrorAction stop).Value
+        [MicrosoftGraphDriveItem1[]](Invoke-MgGraphRequest -Method GET "v1.0/drives/$DriveId/$DrivePath" -ErrorAction stop).Value
     } catch {
         $PSItem
         | Set-StatusCodeErrorMessage 'NotFound' "The file or folder '$Path' does not exist in drive $($Drive.Name). Paths should be specified in folder/folder/file.txt format"
@@ -178,8 +178,7 @@ function Save-JmgDriveItem {
         [String]$Path,
         #Overwrite Files
         [Switch]$Force,
-        [Parameter(Mandatory, ValueFromPipeline)]
-        [Microsoft.Graph.Powershell.Models.MicrosoftGraphDrive1, Microsoft.Graph.Files.Private]$DriveItem
+        [Parameter(Mandatory, ValueFromPipeline)][MicrosoftGraphDriveItem1]$DriveItem
     )
     begin {
         if (-not (Get-MgContext)) {
@@ -242,7 +241,7 @@ function Push-JmgDriveItem {
         #Return the drive items after they are uploaded
         [Switch]$PassThru,
         #The upload destination
-        [Microsoft.Graph.Powershell.Models.MicrosoftGraphDriveItem1, Microsoft.Graph.Files.Private]$DriveItem
+        [MicrosoftGraphDriveItem1]$DriveItem
     )
     begin {
         if (-not (Get-MgContext)) {
@@ -326,7 +325,7 @@ function Push-JmgDriveItem {
                     }
                     Body        = [IO.File]::ReadAllBytes($context.Item.FullName)
                 }
-                [Microsoft.Graph.Powershell.Models.MicrosoftGraphDriveItem1, Microsoft.Graph.Files.Private](Invoke-MgGraphRequest @UploadParams)
+                [Microsoft.Graph.Powershell.Models.MicrosoftGraphDriveItem1](Invoke-MgGraphRequest @UploadParams)
             }
             $jobs.Add($job)
         }
