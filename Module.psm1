@@ -60,20 +60,20 @@ Get-MgSite 'SiteSearchKeyword'
         'MicrosoftGraphGroup1' { Get-MgGroupDrive -GroupId $InputObject.Id }
         'MicrosoftGraphTeam1' { Get-MgGroupDrive -GroupId $InputObject.Id }
         default {
-            try {
-                $uri = [Uri]::new($InputObject)
-                return $Uri | Get-JMgDrive
-            } catch [MethodInvocationException] {}
+            [uri]$uri = $null
+            if ([Uri]::TryCreate($InputObject, 'Absolute', [ref]$uri)) {
+                return $uri | Get-JMgDrive
+            }
 
-            $upn = $InputObject -as [mailaddress]
-            if ($upn) {
+            [mailaddress]$upn = $null
+            if ([MailAddress]::TryCreate($InputObject, [ref]$upn)) {
                 return $upn | Get-JMgDrive
             }
 
             # Last resort is a keyword search of Sharepoint Sites
-            $siteIds = (Get-MgSite -Search ([String]$InputObject)).id
-            if (-not $siteIds) { throw "Site Search returned no results for $siteIds" }
-            $siteIds | Get-JMgDrive
+            $sites = Get-MgSite -Search ([String]$InputObject)
+            if (-not $sites) { throw "Site Search returned no results for $InputObject" }
+            $sites | Get-JMgDrive
         }
     }
 }
@@ -125,10 +125,18 @@ filter Get-JMgDriveChildItem {
     [CmdletBinding()]
     param(
         #The Id of the drive. You can pipe from Get-JMg
-        [Parameter(ValueFromPipeline)][MicrosoftGraphDrive1]$Drive,
+        [Parameter(ValueFromPipeline)]$Drive,
         #The path to the file. If not specified, it gets the root folder
         [String]$Path
     )
+
+    #DriveItem casts to Drive so we cant do a standard type parameter for -Drive
+    if ($Drive.GetType().Name -eq 'MicrosoftGraphDriveItem1') {
+        Write-Error -Exception ([NotImplementedException]'You cant pass DriveItems to this command yet, only drives. Use -Path if you want a subfolder')
+        return
+    }
+    $Drive = [MicrosoftGraphDrive1]$Drive
+
     if (-not (Get-MgContext)) {
         throw 'You are not connected to Microsoft Graph. Please run Connect-MgGraph first.'
     }
@@ -235,9 +243,6 @@ function Push-JmgDriveItem {
             $DriveItem = Get-JMgDriveItem
         }
         #HACK: Because of how the objects get composed there's not a great way to check if the destination is a folder or a file.
-        if ($DriveItem.AdditionalProperties.'@odata.context' -match '/root/\$entity$') {
-            $DriveItemIsRoot = $true
-        }
         if ($null -ne $DriveItem.Folder.ChildCount) {
             Write-Verbose "Detected that the driveItem $($DriveItem.Name) is a folder, will save to same-named file in the folder"
             $DriveItemIsFolder = $true
@@ -261,7 +266,7 @@ function Push-JmgDriveItem {
         $driveId = $DriveItem.ParentReference.DriveId
 
         [string]$ItemPath = switch ($true) {
-            $DriveItemIsRoot {
+            (Test-IsDriveRoot $DriveItem) {
                 'root' + ':/' + $Item.Name + ':'; break
             }
             $driveItemIsFolder {
@@ -327,4 +332,9 @@ function Push-JmgDriveItem {
             }
         }
     }
+}
+
+
+function Test-IsDriveRoot ($DriveItem) {
+    $DriveItem.AdditionalProperties.'@odata.context' -match '/root/\$entity$'
 }
