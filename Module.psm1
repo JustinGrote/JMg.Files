@@ -214,7 +214,10 @@ function Save-JmgDriveItem {
         }
         [uri]$downloadUri = $DriveItem.AdditionalProperties[$downloadUriProperty]
         if ($PSCmdlet.ShouldProcess($dstPath, "Download file $($DriveItem.Name)")) {
-            $job = Start-ThreadJob -Name "Download-$($DriveItem.Name)" { Invoke-RestMethod -Uri $USING:downloadUri -OutFile $USING:dstPath }
+            $job = Start-ThreadJob -Name "Download-$($DriveItem.Name)" {
+                $ProgressPreference = 'SilentlyContinue'
+                Invoke-RestMethod -Uri $USING:downloadUri -OutFile $USING:dstPath
+            }
             $jobs.Add($job)
         }
     }
@@ -309,6 +312,7 @@ function Push-JmgDriveItem {
             $job = Start-ThreadJob -Name "Upload-$($Item.Name)" -ArgumentList $context -ScriptBlock {
                 param($context)
                 $uploadSession = try {
+                    $ProgressPreference = 'SilentlyContinue'
                     Invoke-MgGraphRequest -Method 'POST' -Uri $context.Uri -ContentType 'application/json' -EA stop -SessionVariable session -Body $context.Body
                 } catch {
                     if ($psitem.exception.response.statuscode -eq 'Conflict') {
