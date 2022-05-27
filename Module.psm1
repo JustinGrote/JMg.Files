@@ -98,7 +98,8 @@ filter Get-JMgDriveItem {
     [CmdletBinding()]
     param(
         #The Id of the drive. You can pipe from Get-JMg
-        [Parameter(ValueFromPipeline)][MicrosoftGraphDrive1]$Drive,
+        [Parameter(ValueFromPipeline)]
+        [Microsoft.Powershell.Models.MicrosoftGraphDrive1]$Drive,
         #The path to the file. If not specified, it gets the root folder
         [String]$Path
     )
@@ -178,7 +179,8 @@ function Save-JmgDriveItem {
         [String]$Path,
         #Overwrite Files
         [Switch]$Force,
-        [Parameter(Mandatory, ValueFromPipeline)][MicrosoftGraphDriveItem1]$DriveItem
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [Microsoft.Powershell.Models.MicrosoftGraphDriveItem1]$DriveItem
     )
     begin {
         if (-not (Get-MgContext)) {
@@ -241,7 +243,7 @@ function Push-JmgDriveItem {
         #Return the drive items after they are uploaded
         [Switch]$PassThru,
         #The upload destination
-        [MicrosoftGraphDriveItem1]$DriveItem
+        [Microsoft.Graph.Powershell.Models.MicrosoftGraphDriveItem1]$DriveItem
     )
     begin {
         if (-not (Get-MgContext)) {
