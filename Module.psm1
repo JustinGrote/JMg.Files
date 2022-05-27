@@ -106,11 +106,15 @@ filter Get-JMgDriveItem {
         return
     }
     $DriveId = $Drive.Id
+
+    #Replace leading slashes
+    $Path = $Path -replace '^/+'
+
     if (-not $Path) {
         return Get-MgDriveRoot -DriveId $DriveId
     } else {
         try {
-            [MicrosoftGraphDriveItem1](Invoke-MgGraphRequest -Method GET "v1.0/drives/$DriveId/root:/$Path" -ErrorAction stop).Value
+            [MicrosoftGraphDriveItem1](Invoke-MgGraphRequest -Method GET "v1.0/drives/$DriveId/root:/$Path" -ErrorAction stop)
         } catch {
             if ($PSItem.exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
                 $PSItem.ErrorDetails = "The file or folder '$Path' does not exist in drive $($Drive.Name). Paths should be specified in folder/folder/file.txt format"
