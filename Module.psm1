@@ -352,7 +352,7 @@ function Push-JmgDriveItem {
 
 
 function Test-IsDriveRoot ($DriveItem) {
-    $DriveItem.AdditionalProperties.'@odata.context' -match '/root/\$entity$'
+    $name -eq 'root' -and $null -eq $DriveItem.ParentReference.path
 }
 
 filter Set-StatusCodeErrorMessage ([Net.HttpStatusCode]$code, [String]$message, [Parameter(Mandatory, ValueFromPipeline)][ErrorRecord]$err) {
