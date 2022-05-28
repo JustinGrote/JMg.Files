@@ -12,7 +12,7 @@
     RootModule        = 'Module.psm1'
 
     # Version number of this module.
-    ModuleVersion     = '0.0.5'
+    ModuleVersion     = '0.0.7'
 
     # Supported PSEditions
     # CompatiblePSEditions = @()
@@ -53,6 +53,9 @@
     # Modules that must be imported into the global environment prior to importing this module
     RequiredModules   = @(
         @{ModuleName = 'Microsoft.Graph.Files'; ModuleVersion = '1.9.6' }
+        @{ModuleName = 'Microsoft.Graph.Groups'; ModuleVersion = '1.9.5' }
+        @{ModuleName = 'Microsoft.Graph.Sites'; ModuleVersion = '1.9.2' }
+        @{ModuleName = 'Microsoft.Graph.Users'; ModuleVersion = '1.9.6' }
     )
 
     # Assemblies that must be loaded prior to importing this module
